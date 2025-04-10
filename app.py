@@ -3,8 +3,6 @@ import pandas as pd
 import numpy as np
 import pickle
 from datetime import datetime
-import matplotlib.pyplot as plt
-import seaborn as sns
 
 # Page config
 st.set_page_config(page_title="Traffic Level Predictor", layout="centered")
@@ -99,18 +97,10 @@ st.markdown(f"📅 **Selected Date:** {formatted_date}")
 st.markdown(f"🕒 **Selected Hour:** {selected_hour}:00")
 st.markdown(f"📍 **Junction:** {junction_name}")
 
-# Debug
+# Debug info if needed
 if st.checkbox("Show model input data"):
     st.subheader("🧪 Model Input Features")
     st.dataframe(input_data)
-
-    # Visualization
-    st.subheader("📊 Feature Visualization")
-    fig, ax = plt.subplots(figsize=(10, 4))
-    sns.barplot(x=input_data.columns, y=input_data.values[0], ax=ax)
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right")
-    ax.set_title("Model Input Features")
-    st.pyplot(fig)
 
 # Predict
 if st.button("Predict Traffic Level"):
