@@ -112,7 +112,7 @@ if st.button("Predict Traffic Level"):
 
     # Notes
     if junction_name == "Hebbal":
-        st.info("🔍 Hebbal usually has high traffic. Even low vehicle counts may return 'High'.")
+        st.info("🔍 Hebbal usually has high traffic. But sometimes it may have Low traffic as well.")
     elif junction_name == "Nagawara":
         st.info("🔍 Nagawara tends to show 'Medium' traffic most of the time.")
     elif junction_name == "Electronic City":
