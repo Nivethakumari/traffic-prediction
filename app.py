@@ -1,116 +1,132 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import pickle
+from datetime import datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
-from datetime import datetime
 
 # Page config
 st.set_page_config(page_title="Traffic Level Predictor", layout="centered")
 
+# Load model and expected feature list
 @st.cache_resource
 def load_model():
     with open("xgb_model.pkl", "rb") as f:
         model = pickle.load(f)
     with open("features_list.pkl", "rb") as f:
-        label_encoder = pickle.load(f)
-    return model, label_encoder
+        feature_list = pickle.load(f)
+    return model, feature_list
 
-model, label_encoder = load_model()
+model, expected_columns = load_model()
 
-# Model expected columns
-expected_columns = [
-    "Junction", "Hour", "DayOfWeek", "Month", "Year", "IsWeekend",
-    "IsMonthStart", "IsMonthEnd", "IsWeekendMorning", "Quarter",
-    "PartOfDay_Afternoon", "PartOfDay_Evening", "PartOfDay_Morning", "PartOfDay_Night",
-    "JunctionName_Electronic City", "JunctionName_Hebbal", "JunctionName_KR Puram", "JunctionName_Nagawara"
-]
-
-junction_options = ["Hebbal", "Nagawara", "KR Puram", "Electronic City"]
+# Junction mapping for display
+junction_map = {
+    "Hebbal": "JunctionName_Hebbal",
+    "Nagawara": "JunctionName_Nagawara",
+    "Electronic City": "JunctionName_Electronic City",
+    "KR Puram": "JunctionName_KR Puram"
+}
 
 # Title
 st.title("🚦 Real-Time Traffic Level Predictor")
 st.markdown("Predict traffic levels for any date, time, and location in Bengaluru.")
 
-# Inputs
-junction_name = st.selectbox("Select Junction", junction_options)
+# User input
+junction_name = st.selectbox("Select Junction", list(junction_map.keys()))
 selected_date = st.date_input("Select Date")
 selected_hour = st.slider("Select Hour (0-23)", 0, 23, datetime.now().hour)
 
-# Feature Engineering
+# Feature engineering
 day = selected_date.day
 month = selected_date.month
 year = selected_date.year
-day_of_week = selected_date.weekday()
-is_weekend = 1 if selected_date.strftime("%A") in ["Saturday", "Sunday"] else 0
+weekday_num = selected_date.weekday()
+is_weekend = 1 if weekday_num >= 5 else 0
 is_month_start = 1 if day <= 3 else 0
 is_month_end = 1 if day >= 28 else 0
 quarter = (month - 1) // 3 + 1
 is_weekend_morning = 1 if is_weekend and (6 <= selected_hour <= 11) else 0
 
 # Part of Day One-Hot Encoding
-part_of_day = ""
+part_of_day = {
+    "PartOfDay_Night": 0,
+    "PartOfDay_Morning": 0,
+    "PartOfDay_Afternoon": 0,
+    "PartOfDay_Evening": 0
+}
 if 0 <= selected_hour < 6:
-    part_of_day = "Night"
+    part_of_day["PartOfDay_Night"] = 1
 elif 6 <= selected_hour < 12:
-    part_of_day = "Morning"
+    part_of_day["PartOfDay_Morning"] = 1
 elif 12 <= selected_hour < 18:
-    part_of_day = "Afternoon"
+    part_of_day["PartOfDay_Afternoon"] = 1
 else:
-    part_of_day = "Evening"
+    part_of_day["PartOfDay_Evening"] = 1
 
-part_of_day_encoded = {
-    "PartOfDay_Morning": 1 if part_of_day == "Morning" else 0,
-    "PartOfDay_Afternoon": 1 if part_of_day == "Afternoon" else 0,
-    "PartOfDay_Evening": 1 if part_of_day == "Evening" else 0,
-    "PartOfDay_Night": 1 if part_of_day == "Night" else 0
+# Junction One-Hot Encoding
+junction_encoding = {
+    "JunctionName_Hebbal": 0,
+    "JunctionName_Nagawara": 0,
+    "JunctionName_Electronic City": 0,
+    "JunctionName_KR Puram": 0
 }
+junction_encoding[junction_map[junction_name]] = 1
 
-# Junction Name One-Hot Encoding
-junction_encoded = {
-    "JunctionName_Hebbal": 1 if junction_name == "Hebbal" else 0,
-    "JunctionName_Nagawara": 1 if junction_name == "Nagawara" else 0,
-    "JunctionName_KR Puram": 1 if junction_name == "KR Puram" else 0,
-    "JunctionName_Electronic City": 1 if junction_name == "Electronic City" else 0
-}
-
-# Combine all features into a single dictionary
+# Build input data dictionary
 input_dict = {
-    "Junction": junction_options.index(junction_name) + 1,
+    "Junction": list(junction_map.keys()).index(junction_name) + 1,
     "Hour": selected_hour,
-    "DayOfWeek": day_of_week,
+    "DayOfWeek": weekday_num,
     "Month": month,
     "Year": year,
     "IsWeekend": is_weekend,
     "IsMonthStart": is_month_start,
     "IsMonthEnd": is_month_end,
     "IsWeekendMorning": is_weekend_morning,
-    "Quarter": quarter,
-    **part_of_day_encoded,
-    **junction_encoded
+    "Quarter": quarter
 }
+input_dict.update(part_of_day)
+input_dict.update(junction_encoding)
 
-# Reorder to expected columns
-input_data = pd.DataFrame([input_dict])[expected_columns]
+# Convert to DataFrame
+input_data = pd.DataFrame([input_dict])
+input_data = input_data.reindex(columns=expected_columns, fill_value=0).astype(float)
 
-# Display date and hour
-formatted_date = selected_date.strftime("%d %B %Y")
-st.markdown(f"📅 **Selected Date:** {formatted_date} ({selected_date.strftime('%A')})")
+# Display selected info
+formatted_date = selected_date.strftime("%d %B %Y (%A)")
+st.markdown(f"📅 **Selected Date:** {formatted_date}")
 st.markdown(f"🕒 **Selected Hour:** {selected_hour}:00")
+st.markdown(f"📍 **Junction:** {junction_name}")
+
+# Debug
+if st.checkbox("Show model input data"):
+    st.subheader("🧪 Model Input Features")
+    st.dataframe(input_data)
+
+    # Visualization
+    st.subheader("📊 Feature Visualization")
+    fig, ax = plt.subplots(figsize=(10, 4))
+    sns.barplot(x=input_data.columns, y=input_data.values[0], ax=ax)
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right")
+    ax.set_title("Model Input Features")
+    st.pyplot(fig)
 
 # Predict
 if st.button("Predict Traffic Level"):
     prediction = model.predict(input_data)
-    traffic_level = label_encoder.inverse_transform(prediction)[0]
+    label_map = {0: "Low", 1: "Medium", 2: "High"}
+    traffic_level = label_map[int(prediction[0])]
+
     st.success(f"🚗 Predicted Traffic Level: **{traffic_level}**")
 
-    # Visualization
-    st.subheader("📊 Traffic Pattern Visualization")
-    fig, ax = plt.subplots()
-    sns.barplot(x=["Night", "Morning", "Afternoon", "Evening"], y=[10, 40, 70, 50], palette="viridis", ax=ax)
-    ax.set_ylabel("Avg. Traffic Intensity (%)")
-    ax.set_title("Sample Traffic Distribution by Time of Day")
-    st.pyplot(fig)
+    # Notes
+    if junction_name == "Hebbal":
+        st.info("🔍 Hebbal usually has high traffic. Even low vehicle counts may return 'High'.")
+    elif junction_name == "Nagawara":
+        st.info("🔍 Nagawara tends to show 'Medium' traffic most of the time.")
+    elif junction_name == "Electronic City":
+        st.info("🔍 Electronic City often shows 'Low' traffic levels.")
 
 # Footer
 st.markdown("---")
