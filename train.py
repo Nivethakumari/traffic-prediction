@@ -1,40 +1,72 @@
 import pandas as pd
 import numpy as np
-import joblib
-from xgboost import XGBClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
-from sklearn.metrics import accuracy_score, classification_report
+from xgboost import XGBClassifier
+import pickle
 
-# Load your traffic dataset
+# Load dataset
 df = pd.read_csv("traffic.csv")
 
-# Encode the target variable
+# Feature Engineering
+df["DayOfWeek"] = pd.to_datetime(df["Date"]).dt.weekday
+df["Month"] = pd.to_datetime(df["Date"]).dt.month
+df["Year"] = pd.to_datetime(df["Date"]).dt.year
+df["Hour"] = pd.to_datetime(df["Time"]).dt.hour
+df["IsWeekend"] = df["DayOfWeek"].apply(lambda x: 1 if x >= 5 else 0)
+df["IsMonthStart"] = pd.to_datetime(df["Date"]).dt.is_month_start.astype(int)
+df["IsMonthEnd"] = pd.to_datetime(df["Date"]).dt.is_month_end.astype(int)
+df["Quarter"] = pd.to_datetime(df["Date"]).dt.quarter
+
+# PartOfDay Feature
+def get_part_of_day(hour):
+    if 5 <= hour < 12:
+        return "Morning"
+    elif 12 <= hour < 17:
+        return "Afternoon"
+    elif 17 <= hour < 21:
+        return "Evening"
+    else:
+        return "Night"
+
+df["PartOfDay"] = df["Hour"].apply(get_part_of_day)
+
+# Weekend Morning feature
+df["IsWeekendMorning"] = ((df["IsWeekend"] == 1) & (df["PartOfDay"] == "Morning")).astype(int)
+
+# Encoding Target
 label_encoder = LabelEncoder()
-df["Traffic"] = label_encoder.fit_transform(df["Traffic"])
+df["TrafficLevel"] = label_encoder.fit_transform(df["TrafficLevel"])  # Assuming column name is TrafficLevel
 
-# Features and target
-X = df.drop("Traffic", axis=1)
-y = df["Traffic"]
+# One-Hot Encoding
+df = pd.get_dummies(df, columns=["PartOfDay", "Junction"], prefix=["PartOfDay", "JunctionName"])
 
-# Store feature names
-feature_names = X.columns.tolist()
+# Features to use
+features = [
+    "Hour", "DayOfWeek", "Month", "Year", "IsWeekend",
+    "IsMonthStart", "IsMonthEnd", "IsWeekendMorning", "Quarter"
+] + [col for col in df.columns if col.startswith("PartOfDay_") or col.startswith("JunctionName_")]
+
+X = df[features]
+y = df["TrafficLevel"]
 
 # Train-test split
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-# Define and train the XGBoost model
+# Train model
 model = XGBClassifier(use_label_encoder=False, eval_metric='mlogloss', random_state=42)
 model.fit(X_train, y_train)
 
-# Evaluate the model
-y_pred = model.predict(X_test)
-accuracy = accuracy_score(y_test, y_pred)
+# Save model
+with open("xgb_model.pkl", "wb") as f:
+    pickle.dump(model, f)
 
-print(f"Model Accuracy: {accuracy * 100:.2f}%")
-print("Classification Report:\n", classification_report(y_test, y_pred))
+# Save feature list
+with open("features_list.pkl", "wb") as f:
+    pickle.dump(features, f)
 
-# Save model and related files
-joblib.dump(model, "xgb_model.pkl")
-joblib.dump(feature_names, "features_list.pkl")
-joblib.dump(label_encoder, "label_encoder.pkl")
+# Save label encoder
+with open("label_encoder.pkl", "wb") as f:
+    pickle.dump(label_encoder, f)
+
+print("✅ Model, features, and label encoder saved successfully!")
