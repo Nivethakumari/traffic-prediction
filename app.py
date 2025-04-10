@@ -117,7 +117,10 @@ if st.button("Predict Traffic Level"):
         st.info("🔍 Nagawara tends to show 'Medium' traffic most of the time.")
     elif junction_name == "Electronic City":
         st.info("🔍 Electronic City often shows 'Low' traffic levels.")
+    elif junction_name == "KR Puram":
+        st.info("🔍 KR Puram typically records 'Medium' traffic under most conditions.")
 
 # Footer
 st.markdown("---")
 st.markdown("👩‍💻 Created by **Nivethakumari & Dharshini Shree**")
+
