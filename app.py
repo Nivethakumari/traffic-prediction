@@ -1,88 +1,123 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import joblib
+import pickle
 from datetime import datetime
-import pytz
 
-# Load model and features list
+# Page config
+st.set_page_config(page_title="Traffic Level Predictor", layout="centered")
+
+# Load model and expected feature list
 @st.cache_resource
 def load_model():
-    model = joblib.load("xgb_model.pkl")
-    features = joblib.load("features_list.pkl")
-    return model, features
+    with open("xgb_model.pkl", "rb") as f:
+        model = pickle.load(f)
+    with open("features_list.pkl", "rb") as f:
+        feature_list = pickle.load(f)
+    return model, feature_list
 
-model, feature_list = load_model()
+model, expected_columns = load_model()
 
-st.title("🚦 Real-Time Traffic Prediction")
-st.write("This app predicts traffic levels (Low, Medium, High) based on current time and location.")
-
-# Current IST time
-ist = pytz.timezone("Asia/Kolkata")
-now = datetime.now(ist)
-day = now.strftime("%A")
-date = now.strftime("%d %B %Y")
-hour = now.hour
-minute = now.minute
-
-st.subheader("📅 Date and Time Info")
-st.write(f"**Date:** {date}")
-st.write(f"**Day:** {day}")
-st.write(f"**Time:** {hour:02d}:{minute:02d} IST")
-
-# Junction select
+# Junction mapping for display
 junction_map = {
-    "J1": "Hebbal Junction",
-    "J2": "KR Puram Junction",
-    "J3": "Marathahalli Junction",
-    "J4": "Silk Board Junction"
+    "Hebbal": "JunctionName_Hebbal",
+    "Nagawara": "JunctionName_Nagawara",
+    "Electronic City": "JunctionName_Electronic City",
+    "KR Puram": "JunctionName_KR Puram"
 }
 
-junction_code = st.selectbox("🛣️ Select Junction", list(junction_map.keys()), format_func=lambda x: junction_map[x])
+# Title
+st.title("🚦 Real-Time Traffic Level Predictor")
+st.markdown("Predict traffic levels for any date, time, and location in Bengaluru.")
+
+# User input
+junction_name = st.selectbox("Select Junction", list(junction_map.keys()))
+selected_date = st.date_input("Select Date")
+selected_hour = st.slider("Select Hour (0-23)", 0, 23, datetime.now().hour)
 
 # Feature engineering
-def extract_features(current_time, junction_code):
-    hour = current_time.hour
-    part_of_day = (
-        "Night" if 0 <= hour < 6 else
-        "Morning" if 6 <= hour < 12 else
-        "Afternoon" if 12 <= hour < 17 else
-        "Evening"
-    )
-    is_month_start = int(current_time.day <= 3)
-    is_month_end = int(current_time.day >= 28)
-    is_weekend_morning = int(current_time.weekday() >= 5 and 6 <= hour <= 10)
-    quarter = (current_time.month - 1) // 3 + 1
+day = selected_date.day
+month = selected_date.month
+year = selected_date.year
+weekday_num = selected_date.weekday()
+is_weekend = 1 if weekday_num >= 5 else 0
+is_month_start = 1 if day <= 3 else 0
+is_month_end = 1 if day >= 28 else 0
+quarter = (month - 1) // 3 + 1
+is_weekend_morning = 1 if is_weekend and (6 <= selected_hour <= 11) else 0
 
-    return {
-        "Junction": junction_code,
-        "Day": current_time.strftime("%A"),
-        "Hour": current_time.hour,
-        "Minute": current_time.minute,
-        "PartOfDay": part_of_day,
-        "IsMonthStart": is_month_start,
-        "IsMonthEnd": is_month_end,
-        "IsWeekendMorning": is_weekend_morning,
-        "Quarter": quarter,
-        "Month": current_time.month,
-        "Year": current_time.year
-    }
+# Part of Day One-Hot Encoding
+part_of_day = {
+    "PartOfDay_Night": 0,
+    "PartOfDay_Morning": 0,
+    "PartOfDay_Afternoon": 0,
+    "PartOfDay_Evening": 0
+}
+if 0 <= selected_hour < 6:
+    part_of_day["PartOfDay_Night"] = 1
+elif 6 <= selected_hour < 12:
+    part_of_day["PartOfDay_Morning"] = 1
+elif 12 <= selected_hour < 18:
+    part_of_day["PartOfDay_Afternoon"] = 1
+else:
+    part_of_day["PartOfDay_Evening"] = 1
 
-# Prepare input
-features = extract_features(now, junction_code)
-input_df = pd.DataFrame([features])
-input_data = pd.get_dummies(input_df)
+# Junction One-Hot Encoding
+junction_encoding = {
+    "JunctionName_Hebbal": 0,
+    "JunctionName_Nagawara": 0,
+    "JunctionName_Electronic City": 0,
+    "JunctionName_KR Puram": 0
+}
+junction_encoding[junction_map[junction_name]] = 1
 
-# Align input with training features
-for col in feature_list:
-    if col not in input_data.columns:
-        input_data[col] = 0
-input_data = input_data[feature_list]
+# Build input data dictionary
+input_dict = {
+    "Junction": list(junction_map.keys()).index(junction_name) + 1,
+    "Hour": selected_hour,
+    "DayOfWeek": weekday_num,
+    "Month": month,
+    "Year": year,
+    "IsWeekend": is_weekend,
+    "IsMonthStart": is_month_start,
+    "IsMonthEnd": is_month_end,
+    "IsWeekendMorning": is_weekend_morning,
+    "Quarter": quarter
+}
+input_dict.update(part_of_day)
+input_dict.update(junction_encoding)
+
+# Convert to DataFrame
+input_data = pd.DataFrame([input_dict])
+input_data = input_data.reindex(columns=expected_columns, fill_value=0).astype(float)
+
+# Display selected info
+formatted_date = selected_date.strftime("%d %B %Y (%A)")
+st.markdown(f"📅 **Selected Date:** {formatted_date}")
+st.markdown(f"🕒 **Selected Hour:** {selected_hour}:00")
+st.markdown(f"📍 **Junction:** {junction_name}")
+
+# Debug info if needed
+if st.checkbox("Show model input data"):
+    st.subheader("🧪 Model Input Features")
+    st.dataframe(input_data)
 
 # Predict
-if st.button("Predict Traffic"):
-    prediction = model.predict(input_data)[0]  # directly use the predicted label
-    st.success(f"🚗 **Predicted Traffic Level:** {prediction}")
+if st.button("Predict Traffic Level"):
+    prediction = model.predict(input_data)
+    label_map = {0: "Low", 1: "Medium", 2: "High"}
+    traffic_level = label_map[int(prediction[0])]
 
+    st.success(f"🚗 Predicted Traffic Level: **{traffic_level}**")
+
+    # Notes
+    if junction_name == "Hebbal":
+        st.info("🔍 Hebbal usually has high traffic. Even low vehicle counts may return 'High'.")
+    elif junction_name == "Nagawara":
+        st.info("🔍 Nagawara tends to show 'Medium' traffic most of the time.")
+    elif junction_name == "Electronic City":
+        st.info("🔍 Electronic City often shows 'Low' traffic levels.")
+
+# Footer
 st.markdown("---")
-st.markdown("Created by **Nivethakumari**")
+st.markdown("👩‍💻 Created by **Nivethakumari & Dharshini Shree**")
