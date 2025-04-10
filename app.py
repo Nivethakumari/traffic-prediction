@@ -2,90 +2,97 @@ import streamlit as st
 import pandas as pd
 import joblib
 import datetime
+import pytz
 
-# Load the model
+# Load model and helpers
 @st.cache_resource
 def load_model():
     model = joblib.load("xgb_model.pkl")
-    return model
+    features = joblib.load("features_list.pkl")
+    label_encoder = joblib.load("label_encoder.pkl")
+    return model, features, label_encoder
 
-# Prediction mapping
-label_mapping = {0: 'High', 1: 'Low', 2: 'Medium'}
+model, expected_columns, label_encoder = load_model()
 
-model = load_model()
+# Junction name mapping
+junction_map = {
+    '1': 'Hebbal',
+    '2': 'KR Puram',
+    '3': 'Electronic City',
+    '4': 'Nagawara'
+}
 
-# App title
+# UI
+st.set_page_config(page_title="Traffic Predictor", layout="centered")
 st.title("🚦 Real-Time Traffic Prediction")
+st.write("Enter your junction and see the predicted traffic level!")
 
-# Current time details
-current_time = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30)))
+# Real-time IST info
+ist = pytz.timezone('Asia/Kolkata')
+current_time = datetime.datetime.now(ist)
 hour = current_time.hour
 day = current_time.day
 month = current_time.month
 year = current_time.year
-weekday = current_time.weekday()  # Monday = 0
-is_weekend = 1 if weekday >= 5 else 0
-is_month_start = 1 if day <= 5 else 0
-is_month_end = 1 if day >= 25 else 0
-quarter = (month - 1) // 3 + 1
-
-# Part of day
-if 5 <= hour < 12:
-    part_of_day = "Morning"
-elif 12 <= hour < 17:
-    part_of_day = "Afternoon"
-elif 17 <= hour < 21:
-    part_of_day = "Evening"
-else:
-    part_of_day = "Night"
-
-# Weekend morning
-is_weekend_morning = 1 if is_weekend == 1 and part_of_day == "Morning" else 0
-
-# Junction selection
-junction = st.selectbox("Select Junction", ["Hebbal", "KR Puram", "Electronic City", "Nagawara"])
+weekday = current_time.weekday()  # 0 = Monday, 6 = Sunday
 
 # Feature engineering
-input_data = pd.DataFrame({
-    "Junction": [junction],
-    "Hour": [hour],
-    "DayOfWeek": [weekday],
-    "Month": [month],
-    "Year": [year],
-    "IsWeekend": [is_weekend],
-    "IsMonthStart": [is_month_start],
-    "IsMonthEnd": [is_month_end],
-    "IsWeekendMorning": [is_weekend_morning],
-    "Quarter": [quarter],
-    "PartOfDay": [part_of_day]
-})
+is_weekend = 1 if weekday >= 5 else 0
+is_month_start = 1 if day <= 3 else 0
+is_month_end = 1 if day >= 28 else 0
+quarter = (month - 1) // 3 + 1
+is_weekend_morning = 1 if is_weekend and (5 <= hour <= 10) else 0
 
-# One-hot encode PartOfDay and Junction
-input_data = pd.get_dummies(input_data)
+# Part of day
+def get_part_of_day(hour):
+    if 5 <= hour < 12:
+        return "Morning"
+    elif 12 <= hour < 17:
+        return "Afternoon"
+    elif 17 <= hour < 20:
+        return "Evening"
+    else:
+        return "Night"
 
-# Add missing columns
-expected_columns = [
-    'Hour', 'DayOfWeek', 'Month', 'Year', 'IsWeekend',
-    'IsMonthStart', 'IsMonthEnd', 'IsWeekendMorning', 'Quarter',
-    'PartOfDay_Afternoon', 'PartOfDay_Evening', 'PartOfDay_Morning', 'PartOfDay_Night',
-    'Junction_Electronic City', 'Junction_Hebbal', 'Junction_KR Puram', 'Junction_Nagawara'
-]
+part_of_day = get_part_of_day(hour)
 
+# User input
+junction_name = st.selectbox("Select a Junction", list(junction_map.values()))
+
+# Build input dataframe
+input_dict = {
+    'Hour': hour,
+    'DayOfWeek': weekday,
+    'Month': month,
+    'Year': year,
+    'IsWeekend': is_weekend,
+    'IsMonthStart': is_month_start,
+    'IsMonthEnd': is_month_end,
+    'Quarter': quarter,
+    'IsWeekendMorning': is_weekend_morning,
+    'PartOfDay_' + part_of_day: 1,
+    'JunctionName_' + junction_name: 1
+}
+
+# Fill missing dummy columns with 0
 for col in expected_columns:
-    if col not in input_data.columns:
-        input_data[col] = 0
+    if col not in input_dict:
+        input_dict[col] = 0
 
-# Ensure correct column order
-input_data = input_data[expected_columns].astype(float)
+# Create DataFrame
+input_data = pd.DataFrame([input_dict])[expected_columns]
 
 # Predict
 prediction = model.predict(input_data)
-traffic_level = label_mapping[prediction[0]]
+predicted_label = label_encoder.inverse_transform(prediction)[0]
 
-# Display results
-st.subheader("📊 Prediction Result")
-st.success(f"Predicted Traffic Level: **{traffic_level}**")
+# Display
+st.markdown("---")
+st.subheader(f"📍 Junction: {junction_name}")
+st.subheader(f"🕒 Time: {current_time.strftime('%d %B %Y, %A – %I:%M %p')}")
+st.success(f"**Predicted Traffic Level:** {predicted_label}")
 
 # Footer
 st.markdown("---")
-st.markdown("Created by Nivethakumari")
+st.markdown("<center><small>Created by Nivethakumari</small></center>", unsafe_allow_html=True)
+
