@@ -1,123 +1,142 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import pickle
-from datetime import datetime
+import joblib
+import datetime
+import matplotlib.pyplot as plt
+import seaborn as sns
 
-# Page config
-st.set_page_config(page_title="Traffic Level Predictor", layout="centered")
+st.set_page_config(page_title="Traffic Prediction", layout="wide")
+st.title("🚦 Real-Time Traffic Level Predictor")
 
-# Load model and expected feature list
 @st.cache_resource
 def load_model():
-    with open("xgb_model.pkl", "rb") as f:
-        model = pickle.load(f)
-    with open("features_list.pkl", "rb") as f:
-        feature_list = pickle.load(f)
-    return model, feature_list
+    model = joblib.load("xgb_model.pkl")
+    label_encoder = joblib.load("label_encoder.pkl")
+    return model, label_encoder
 
-model, expected_columns = load_model()
+model, label_encoder = load_model()
 
-# Junction mapping for display
-junction_map = {
-    "Hebbal": "JunctionName_Hebbal",
-    "Nagawara": "JunctionName_Nagawara",
-    "Electronic City": "JunctionName_Electronic City",
-    "KR Puram": "JunctionName_KR Puram"
-}
+@st.cache_data
+def load_data():
+    return pd.read_csv("traffic.csv")
 
-# Title
-st.title("🚦 Real-Time Traffic Level Predictor")
-st.markdown("Predict traffic levels for any date, time, and location in Bengaluru.")
+data = load_data()
 
-# User input
-junction_name = st.selectbox("Select Junction", list(junction_map.keys()))
-selected_date = st.date_input("Select Date")
-selected_hour = st.slider("Select Hour (0-23)", 0, 23, datetime.now().hour)
+# ---------- VISUALIZATION FUNCTIONS ----------
+def plot_traffic_heatmap(df):
+    heatmap_data = df.groupby(["Hour", "Junction"]).size().unstack().fillna(0)
+    fig, ax = plt.subplots(figsize=(10, 6))
+    sns.heatmap(heatmap_data, cmap="YlGnBu", annot=False, fmt=".0f", ax=ax)
+    ax.set_title("Heatmap of Traffic Volume by Hour and Junction")
+    st.pyplot(fig)
 
-# Feature engineering
-day = selected_date.day
-month = selected_date.month
-year = selected_date.year
-weekday_num = selected_date.weekday()
-is_weekend = 1 if weekday_num >= 5 else 0
-is_month_start = 1 if day <= 3 else 0
-is_month_end = 1 if day >= 28 else 0
-quarter = (month - 1) // 3 + 1
-is_weekend_morning = 1 if is_weekend and (6 <= selected_hour <= 11) else 0
+def plot_hourly_trend(df):
+    hourly_trend = df.groupby("Hour").size()
+    fig, ax = plt.subplots()
+    hourly_trend.plot(kind="line", marker='o', ax=ax)
+    ax.set_title("Hourly Traffic Volume Trend")
+    ax.set_xlabel("Hour")
+    ax.set_ylabel("Traffic Volume")
+    st.pyplot(fig)
 
-# Part of Day One-Hot Encoding
-part_of_day = {
-    "PartOfDay_Night": 0,
-    "PartOfDay_Morning": 0,
-    "PartOfDay_Afternoon": 0,
-    "PartOfDay_Evening": 0
-}
-if 0 <= selected_hour < 6:
-    part_of_day["PartOfDay_Night"] = 1
-elif 6 <= selected_hour < 12:
-    part_of_day["PartOfDay_Morning"] = 1
-elif 12 <= selected_hour < 18:
-    part_of_day["PartOfDay_Afternoon"] = 1
-else:
-    part_of_day["PartOfDay_Evening"] = 1
+def plot_junction_traffic(df):
+    junction_avg = df.groupby("Junction").size()
+    fig, ax = plt.subplots()
+    junction_avg.plot(kind="bar", color="orange", ax=ax)
+    ax.set_title("Average Traffic by Junction")
+    st.pyplot(fig)
 
-# Junction One-Hot Encoding
-junction_encoding = {
-    "JunctionName_Hebbal": 0,
-    "JunctionName_Nagawara": 0,
-    "JunctionName_Electronic City": 0,
-    "JunctionName_KR Puram": 0
-}
-junction_encoding[junction_map[junction_name]] = 1
+def plot_traffic_distribution(df):
+    fig, ax = plt.subplots()
+    df["TrafficLevel"].value_counts().plot(kind="pie", autopct='%1.1f%%', ax=ax, startangle=90)
+    ax.set_ylabel("")
+    ax.set_title("Traffic Level Distribution")
+    st.pyplot(fig)
 
-# Build input data dictionary
+# ---------- UI ELEMENTS ----------
+st.markdown("## 📅 Current Date & Time")
+now = datetime.datetime.now()
+st.write("**Date:**", now.strftime("%d %B %Y"))
+st.write("**Day:**", now.strftime("%A"))
+st.write("**Time:**", now.strftime("%H:%M:%S"))
+
+st.markdown("## 🧮 Predict Traffic Level")
+junction = st.selectbox("Select Junction", ["Hebbal", "KR Puram", "Electronic City", "Nagawara"])
+
+hour = now.hour
+day = now.day
+month = now.month
+year = now.year
+weekday = now.weekday()
+part_of_day = (
+    "Morning" if 5 <= hour < 12 else
+    "Afternoon" if 12 <= hour < 17 else
+    "Evening" if 17 <= hour < 21 else
+    "Night"
+)
+
+is_month_start = int(now.day <= 5)
+is_month_end = int(now.day >= 25)
+is_weekend = int(now.weekday() >= 5)
+is_weekend_morning = int(is_weekend and hour < 12)
+quarter = (now.month - 1) // 3 + 1
+
 input_dict = {
-    "Junction": list(junction_map.keys()).index(junction_name) + 1,
-    "Hour": selected_hour,
-    "DayOfWeek": weekday_num,
-    "Month": month,
-    "Year": year,
-    "IsWeekend": is_weekend,
-    "IsMonthStart": is_month_start,
-    "IsMonthEnd": is_month_end,
-    "IsWeekendMorning": is_weekend_morning,
-    "Quarter": quarter
+    'Junction': junction,
+    'Hour': hour,
+    'DayOfWeek': weekday,
+    'Month': month,
+    'Year': year,
+    'IsWeekend': is_weekend,
+    'IsMonthStart': is_month_start,
+    'IsMonthEnd': is_month_end,
+    'IsWeekendMorning': is_weekend_morning,
+    'Quarter': quarter,
+    'PartOfDay': part_of_day
 }
-input_dict.update(part_of_day)
-input_dict.update(junction_encoding)
 
-# Convert to DataFrame
-input_data = pd.DataFrame([input_dict])
-input_data = input_data.reindex(columns=expected_columns, fill_value=0).astype(float)
+input_df = pd.DataFrame([input_dict])
 
-# Display selected info
-formatted_date = selected_date.strftime("%d %B %Y (%A)")
-st.markdown(f"📅 **Selected Date:** {formatted_date}")
-st.markdown(f"🕒 **Selected Hour:** {selected_hour}:00")
-st.markdown(f"📍 **Junction:** {junction_name}")
+# One-hot encoding for categorical features
+input_encoded = pd.get_dummies(input_df, columns=["PartOfDay", "Junction"], prefix=["PartOfDay", "JunctionName"])
 
-# Debug info if needed
-if st.checkbox("Show model input data"):
-    st.subheader("🧪 Model Input Features")
-    st.dataframe(input_data)
+# Align to expected model input
+expected_columns = [
+    "Junction", "Hour", "DayOfWeek", "Month", "Year", "IsWeekend", "IsMonthStart",
+    "IsMonthEnd", "IsWeekendMorning", "Quarter",
+    "PartOfDay_Afternoon", "PartOfDay_Evening", "PartOfDay_Morning", "PartOfDay_Night",
+    "JunctionName_Electronic City", "JunctionName_Hebbal",
+    "JunctionName_KR Puram", "JunctionName_Nagawara"
+]
 
-# Predict
-if st.button("Predict Traffic Level"):
-    prediction = model.predict(input_data)
-    label_map = {0: "Low", 1: "Medium", 2: "High"}
-    traffic_level = label_map[int(prediction[0])]
+# Handle missing columns
+for col in expected_columns:
+    if col not in input_encoded.columns:
+        input_encoded[col] = 0
+input_encoded = input_encoded.reindex(columns=expected_columns, fill_value=0)
 
-    st.success(f"🚗 Predicted Traffic Level: **{traffic_level}**")
+# Prediction
+prediction = model.predict(input_encoded)
+traffic_level = label_encoder.inverse_transform(prediction)[0]
+st.success(f"Predicted Traffic Level at {junction}: **{traffic_level}**")
 
-    # Notes
-    if junction_name == "Hebbal":
-        st.info("🔍 Hebbal usually has high traffic. Even low vehicle counts may return 'High'.")
-    elif junction_name == "Nagawara":
-        st.info("🔍 Nagawara tends to show 'Medium' traffic most of the time.")
-    elif junction_name == "Electronic City":
-        st.info("🔍 Electronic City often shows 'Low' traffic levels.")
+# ---------- VISUALIZATION SECTION ----------
+st.markdown("## 📊 Data Visualizations")
+if st.checkbox("Show Data Visualizations"):
+    st.markdown("### 🔥 Heatmap: Hour vs Junction")
+    plot_traffic_heatmap(data)
+
+    st.markdown("### ⏱️ Line Chart: Hourly Traffic Trend")
+    plot_hourly_trend(data)
+
+    st.markdown("### 🚦 Bar Chart: Avg Traffic by Junction")
+    plot_junction_traffic(data)
+
+    st.markdown("### 🧩 Pie Chart: Traffic Level Distribution")
+    plot_traffic_distribution(data)
 
 # Footer
 st.markdown("---")
-st.markdown("👩‍💻 Created by **Nivethakumari & Dharshini Shree**")
+st.markdown("Created by **Nivethakumari and Dharshini Shree** ✨")
+
