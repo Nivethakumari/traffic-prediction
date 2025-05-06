@@ -122,5 +122,5 @@ if st.button("Predict Traffic Level"):
 
 # Footer
 st.markdown("---")
-st.markdown("👩‍💻 Created by **Nivethakumari & Dharshini Shree**")
+st.markdown("👩‍💻 Created by **Nivethakumari**")
 
